@@ -178,6 +178,15 @@ def classify(data, orgs, chat_org):
             same = any(surname in n.lower() for n in list(data.names[p]) + [data.name(p)])
             result[p]["circle"] = "parent" if same else "relative"
 
+    # Someone saved under his own surname is family: if the model put them outside the family
+    # circles (client, colleague...), call them a relative.
+    family = {"spouse", "child", "parent", "in-law", "sibling", "relative"}
+    if len(surname) >= 3:
+        word = re.compile(r"\b" + re.escape(surname) + r"\b", re.I)
+        for p in result:
+            if result[p]["circle"] not in family and any(word.search(n or "") for n in list(data.names[p]) + [data.name(p)]):
+                result[p]["circle"] = "relative"
+
     for pid, c in seed.items():  # what Arjun told us wins
         if pid in result:
             result[pid]["circle"] = c

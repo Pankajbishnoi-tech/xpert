@@ -1,6 +1,6 @@
 # Write-up
 
-**Model:** `deepseek/deepseek-v3.2` on OpenRouter. **Dev score:** 26.7 / 56 on the parts the checker can
+**Model:** `deepseek/deepseek-v3.2` on OpenRouter. **Dev score:** 27.0 / 56 on the parts the checker can
 score (no model at all: 9.5). **Cost:** about $0.012 per 1,000 messages on dev; one run takes about 2 minutes.
 
 ## What I focused on, and why
@@ -22,7 +22,7 @@ Five stages (`solution.py`), 16 model calls on dev:
    ("Radiant operations": a company of its own, role helper if Arjun never writes there).
 2. **Circles** (5 calls, 70 people each). Each person is a short profile: saved names, 1:1 message
    counts, a few lines they wrote and Arjun's replies, and their groups tagged with organisation. Seed
-   circles override. Code enforces one spouse.
+   circles override. Code enforces one spouse, and anyone saved under Arjun's surname stays in the family circles.
 3. **Links and chat ties** (code only). Colleagues and partners "run" the organisation the model names
    (or the one whose groups they share most), staff "support" home, office or farmhouse. Links are kept only
    for people Arjun talks to one to one, because the answers link few people. Every 1:1 chat is tied to
@@ -33,10 +33,10 @@ Five stages (`solution.py`), 16 model calls on dev:
    One prompt returns type, owner, the message that makes the ask concrete, status with the message that
    closed it, and the help decision. Code then drops trivial items, turns any "done" without a visible
    closing message back to "open", and one small call merges repeats of the same task.
-5. **Goals** (1 call). Only Arjun's own messages are read. At most 6 goals, each needing at least one
-   evidence id that really exists.
+5. **Goals** (1 call). Only Arjun's own messages are read. At most 6 goals, each needing at least two
+   evidence ids that really exist (one passing remark is not a goal).
 
-Seven models were tried on dev at the same settings: DeepSeek V3.2 scored highest (26.7) and was
+Seven models were tried on dev at the same settings: DeepSeek V3.2 scored highest (26.7 before the last round of fixes) and was
 among the cheapest. Gemini 2.5/3.1 Flash-Lite scored 20.7 and 21.3, Qwen3-235B 23.0, Nemotron Ultra 25.1 (at
 four times the cost).
 
@@ -52,8 +52,8 @@ a call from 198s to 10s on a reasoning model and multiplied output tokens).
 
 Rates are from dev. The hidden set is labelled by hand and has new names, so treat these as the centre of a range.
 
-- **Circles: about 25–30% wrong** (dev: 11 of 41). The model mixes up neighbouring circles rather than
-  far-apart ones: relatives called client, friend or colleague (4 of the 11), staff called vendor or colleague (2),
+- **Circles: about 25% wrong** (dev: 10 of 41). The model mixes up neighbouring circles rather than
+  far-apart ones: relatives not saved under his surname called friend or colleague, staff called vendor or colleague (2),
   client vs vendor vs partner (2), sibling called relative. People with few messages fall back to rules
   and are wrong more often.
 - **Organisations: score about 0.3–0.4.** The main companies are found reliably (NEXUS 0.86, PostMyAd
@@ -62,18 +62,21 @@ Rates are from dev. The hidden set is labelled by hand and has new names, so tre
   to Home. On the hidden set I expect 2–3 of the real organisations to be missing.
 - **Chats: about 10% wrong** (dev 0.90). Mostly 1:1 chats with colleagues that the answers tie to the
   company instead of the person, and groups with no organisation tied to the wrong main sender.
-- **Goals: about half of mine will match.** The 6 dev goals are plausible aims (stock portfolio, flat interiors,
-  growing the ad product, hiring an AI team, home theatre, strength training), but goals are unlabelled in dev. A goal
-  backed by one message (strength training on dev) is the most likely to be wrong. I expect to miss family
-  and experience goals that are rarely stated outright.
-- **Open loops found: precision about 25–30%, recall about 45%.** On dev, 29 of 110 loops match. Most
+- **Goals: about half of mine will match.** The 5 dev goals are plausible aims (stock portfolio, flat interiors,
+  growing the ad product, hiring an AI team, home theatre), but goals are unlabelled in dev. I expect to miss
+  family, health and experience goals that are rarely stated outright, and some goals will match the right
+  aim but fall under a different area than ours.
+- **Open loops found: precision about 25–30%, recall about 45%.** On dev, about 30 of 121 loops match. Most
   "extras" are real tasks the answers do not list (team work in client groups, small household errands).
   Most misses are the right task tied to a different message in the same thread. Very few are tasks never found.
 - **Status: about 75% right on matched loops; a false "done" on about 7%** (2 of 29 on dev). The
   usual mistake is "open" where the answers say "done" with no closing message in view.
-- **Where to help: my weakest guess.** Of open loops, about 55% get remind, 30% assist and 15% leave. I
-  expect to say remind or assist on loops Arjun would leave, especially staff-run tasks and his wife's
-  personal requests. That is the costly mistake, and dev has no labels to tune it on.
+- **Where to help: my weakest guess.** A wrong assist or remind on a "leave" costs a point, while a
+  wrong "leave" costs nothing, so the system leans towards leave: any loop owned by someone else is
+  left (as in the kit's example), and the prompt makes leave the choice when unsure. On dev, open loops
+  get 41% remind, 37% leave and 23% assist. The mistakes I still expect: remind or assist on Arjun's own
+  tasks that he would rather handle alone, mostly his wife's personal requests and staff matters.
+  Maybe 1 in 4 of my remind/assist calls is one he would have left. Dev has no labels to measure it.
 - **Failures outside the model:** the provider returning errors or rate limits. Each call is retried
   six times with backoff. A stage that still fails falls back to rules (organisations, circles) or
   to an empty list (loops, goals), so the file stays valid but that part scores low.

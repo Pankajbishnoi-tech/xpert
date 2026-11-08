@@ -62,15 +62,19 @@ For each loop give:
   "dropped" if it was cancelled, refused, superseded, or plainly abandoned.
   Otherwise "open". When unsure, say "open": a false "done" hides real work.
 - "closed_by": for done/dropped, the id of the message that shows it, else null.
-- "help", only when status is "open", choose one:
-  {{"action": "assist", "next_step": "one line", "needs_yes": true/false}}: the assistant can move it forward
-     itself: find options, compare prices, draft a reply, book or order something, set up a meeting, look
-     something up. needs_yes is true if the step sends a message, pays, buys or books (leaves his phone or
-     cannot be undone); false if it is private prep work.
-  {{"action": "remind", "remind_at": "YYYY-MM-DDTHH:MM:00+05:30"}}: only {me} can do it (a call, a personal
-     decision, a meeting, something physical); remind him once at a sensible time before it matters.
-  {{"action": "leave", "reason": "..."}}: stay out: someone else owns it and is handling it, it is staff's job,
-     it is personal or emotional (his wife's feelings, family matters), or a reminder would only annoy him.
+- "help", only when status is "open", choose one. Getting this wrong where {me} wanted to be left alone is the worst
+  mistake, so "leave" is the safe choice whenever you are unsure.
+  {{"action": "assist", "next_step": "one line", "needs_yes": true/false}}: {me} owns it and the assistant can do
+     real prep itself: find options, compare prices, draft a reply or invite, look something up, set up a booking.
+     needs_yes is true if the step sends a message, pays, buys or books; false if it is private prep.
+     Example: "Book Coorg tickets and homestay" -> assist (finding options is private; booking needs a yes).
+  {{"action": "remind", "remind_at": "YYYY-MM-DDTHH:MM:00+05:30"}}: {me} owns it and only he can do it: a decision,
+     a call, a meeting, a payment, a deadline. One nudge at a sensible time before it matters.
+     Examples: "Decide whether to take the offer by Monday" -> remind; "Pitch deck due Friday" -> remind the day before.
+  {{"action": "leave", "reason": "..."}}: someone else owns it or took it on (his wife, a colleague, staff, a vendor),
+     it is staff's routine job, it is personal or emotional (his wife's feelings, family tensions), or a nudge
+     would only annoy him. Examples: "Karan calls the plumber" -> leave (Karan took it); "Colleague sends the
+     invoice" -> leave (the colleague owns it).
 
 Reply with JSON only: {{"loops": [{{"chat": "C..", "source": "M..", "type": "...", "owner": "...", "title": "...", "weight": 2, "due": null,
 "status": "open", "closed_by": null, "help": {{...}}}}]}}. If there are none, reply {{"loops": []}}."""
@@ -260,6 +264,10 @@ def clean_help(h, loop, data):
     action = h.get("action")
     if action not in ("assist", "remind", "leave"):
         action = "leave" if loop["owner"] != "ME" else "remind"
+    if loop["owner"] != "ME":
+        # Someone else took it: chasing them through Arjun is not the assistant's place, and a wrong
+        # assist/remind on a "leave" costs a point while a wrong "leave" costs nothing.
+        action = "leave"
     if action == "assist":
         return {"action": "assist", "next_step": clip(str(h.get("next_step") or loop["title"]), 160), "needs_yes": bool(h.get("needs_yes", True))}
     if action == "remind":

@@ -67,6 +67,8 @@ def find_goals(data):
         if merged:
             cands = merged
     out = []
+    # A goal shown by a single message is usually a passing remark, and an invented goal costs points.
+    cands = [g for g in cands if len(set(g["evidence"])) >= 2]
     for g in cands[:MAX_GOALS]:
         out.append({
             "title": clip(str(g["title"]), 120),
