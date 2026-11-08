@@ -31,8 +31,28 @@ class Data:
 
     def __init__(self, folder):
         folder = Path(folder)
-        self.chats = read_jsonl(folder / "chats.jsonl")
-        self.messages = sorted(read_jsonl(folder / "messages.jsonl"), key=lambda m: (m["ts"], m["id"]))
+        self.chats = []
+        for c in read_jsonl(folder / "chats.jsonl"):
+            if not c.get("chat_id"):
+                continue
+            c["participants"] = [p for p in (c.get("participants") or []) if p]
+            c["is_group"] = bool(c.get("is_group", len(c["participants"]) > 2))
+            c["name"] = c.get("name") or ""
+            self.chats.append(c)
+        known = {c["chat_id"] for c in self.chats}
+        msgs = []
+        for m in read_jsonl(folder / "messages.jsonl"):
+            if not m.get("id") or m.get("chat_id") not in known:
+                continue  # a message we cannot place cannot be cited
+            try:
+                m["ts"] = float(m.get("ts") or 0)
+            except (TypeError, ValueError):
+                m["ts"] = 0.0
+            m["sender_id"] = m.get("sender_id") or "unknown"
+            if not isinstance(m.get("body"), str):
+                m["body"] = "" if m.get("body") is None else str(m["body"])
+            msgs.append(m)
+        self.messages = sorted(msgs, key=lambda m: (m["ts"], m["id"]))
         seed_path = folder / "seed.json"
         self.seed = json.loads(seed_path.read_text(encoding="utf-8")) if seed_path.exists() else {}
         self.seed.setdefault("circles", {})

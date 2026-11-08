@@ -20,6 +20,14 @@ from concurrent.futures import ThreadPoolExecutor
 _lock = threading.Lock()
 _json_mode_ok = {"value": True}
 USAGE_FILE = os.environ.get("XPERT_USAGE", "usage.jsonl")
+# The grader stops us at 30 minutes. After this many seconds no new model call starts, so the rules
+# still get to write a complete file in time.
+_START = time.time()
+BUDGET = float(os.environ.get("XPERT_BUDGET_SECONDS", "1380"))
+
+
+def _left():
+    return BUDGET - (time.time() - _START)
 
 
 def available():
@@ -59,6 +67,10 @@ def chat(messages, temperature=0, max_tokens=4000, json_mode=True, timeout=180, 
     if _json_mode_ok.get("daily_cap"):
         return None
     for attempt in range(int(os.environ.get("XPERT_RETRIES", "6"))):
+        if _left() < 20:
+            last_err = "time budget used up"
+            break
+        timeout = min(timeout, max(20, _left()))
         send = dict(body)
         if json_mode and _json_mode_ok["value"]:
             send["response_format"] = {"type": "json_object"}
@@ -80,15 +92,15 @@ def chat(messages, temperature=0, max_tokens=4000, json_mode=True, timeout=180, 
                 wait = e.headers.get("Retry-After") if e.headers else None
                 time.sleep(min(90, float(wait)) if wait and wait.replace('.', '', 1).isdigit() else 20 * (attempt + 1))
                 continue
-            time.sleep(min(30, 2 ** attempt * 2))
+            time.sleep(max(0, min(30, 2 ** attempt * 2, _left() - 20)))
             continue
         except Exception as e:  # network, timeout, bad JSON from the server
             last_err = repr(e)
-            time.sleep(min(30, 2 ** attempt * 2))
+            time.sleep(max(0, min(30, 2 ** attempt * 2, _left() - 20)))
             continue
         if "error" in data and not data.get("choices"):
             last_err = str(data["error"])[:300]
-            time.sleep(min(30, 2 ** attempt * 2))
+            time.sleep(max(0, min(30, 2 ** attempt * 2, _left() - 20)))
             continue
         try:
             content = data["choices"][0]["message"].get("content") or ""
@@ -97,23 +109,30 @@ def chat(messages, temperature=0, max_tokens=4000, json_mode=True, timeout=180, 
             time.sleep(2)
             continue
         usage = data.get("usage") or {}
+        row = json.dumps({
+            "tag": tag,
+            "model": model,
+            "prompt_tokens": usage.get("prompt_tokens"),
+            "completion_tokens": usage.get("completion_tokens"),
+            "cost": usage.get("cost"),
+            "seconds": round(time.time() - started, 2),
+        })
         with _lock:
-            with open(USAGE_FILE, "a", encoding="utf-8") as f:
-                f.write(json.dumps({
-                    "tag": tag,
-                    "model": model,
-                    "prompt_tokens": usage.get("prompt_tokens"),
-                    "completion_tokens": usage.get("completion_tokens"),
-                    "cost": usage.get("cost"),
-                    "seconds": round(time.time() - started, 2),
-                }) + "\n")
+            try:
+                with open(USAGE_FILE, "a", encoding="utf-8") as f:
+                    f.write(row + "\n")
+            except OSError:  # read-only folder: the log is only for us
+                pass
         if not content.strip():
             last_err = "empty reply"
             continue
         if cache_dir:
-            os.makedirs(cache_dir, exist_ok=True)
-            with open(os.path.join(cache_dir, key + ".json"), "w", encoding="utf-8") as f:
-                json.dump({"content": content}, f)
+            try:
+                os.makedirs(cache_dir, exist_ok=True)
+                with open(os.path.join(cache_dir, key + ".json"), "w", encoding="utf-8") as f:
+                    json.dump({"content": content}, f)
+            except OSError:
+                pass
         return content
     print(f"[llm] giving up on a call ({tag}): {last_err}", file=sys.stderr)
     return None

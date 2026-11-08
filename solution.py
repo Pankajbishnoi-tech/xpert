@@ -12,6 +12,7 @@ always written):
   5. goals          - Arjun's own messages, two small passes
 """
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -60,7 +61,7 @@ def build(input_dir):
     data = Data(input_dir)
     log(f"{len(data.messages)} messages, {len(data.chats)} chats, {len(data.people)} people; model={'on' if llm.available() else 'off'}")
 
-    orgs, chat_org = orgs_mod.find_orgs(data)
+    orgs, chat_org = guarded("organisations", lambda: orgs_mod.find_orgs(data), lambda: orgs_mod.rule_orgs(data))
     log(f"organisations: {[o['name'] for o in orgs]}")
 
     circles = people_mod.classify(data, orgs, chat_org)
@@ -119,19 +120,33 @@ def build(input_dir):
                 ties.append({"chat_id": cid, "organisation": orgs[0]["id"]})
     log("chats tied")
 
-    loops = loops_mod.extract(data, circles)
+    loops = guarded("open loops", lambda: loops_mod.extract(data, circles), [])
     log(f"open loops: {len(loops)}")
 
-    goals = goals_mod.find_goals(data)
+    goals = guarded("goals", lambda: goals_mod.find_goals(data), [])
     log(f"goals: {len(goals)}")
 
     org_out = [{k: v for k, v in o.items() if not k.startswith("_")} for o in orgs]
     return {"people": people, "organisations": org_out, "chats": ties, "goals": goals, "open_loops": loops}
 
 
+def guarded(name, fn, fallback):
+    """Run one stage; if it crashes, log it and use the fallback so the rest still gets written."""
+    try:
+        return fn()
+    except Exception as e:  # noqa: BLE001
+        log(f"{name} failed, using fallback: {e!r}")
+        return fallback() if callable(fallback) else fallback
+
+
 def main(input_dir, output_path):
     started = time.time()
-    out = build(input_dir)
+    try:
+        out = build(input_dir)
+    except Exception as e:  # noqa: BLE001 - last resort: rules only, so the file is still valid
+        log(f"run failed ({e!r}); writing a rules-only file")
+        os.environ["LLM_API_KEY"] = ""
+        out = build(input_dir)
     Path(output_path).write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
     log(f"wrote {output_path} in {time.time() - started:.0f}s")
 
